@@ -1,20 +1,20 @@
 class NotesApp {
     async loadConfig() {
         try {
-            const response = await fetch('notes.cfg');
-            if (response.ok) {
-                const config = await response.json();
-                if (config.defaultDirectory) {
-                    const dirHandle = await window.showDirectoryPicker({
-                        startIn: config.defaultDirectory
-                    });
-                    if (dirHandle) {
-                        this.dirHandle = dirHandle;
-                        this.saveLocation.textContent = `Save Location: ${this.dirHandle.name}`;
-                        await this.loadNotes();
-                    }
-                }
-            }
+            // const response = await fetch('notes.cfg');
+            // if (response.ok) {
+            //     const config = await response.json();
+            //     if (config.defaultDirectory) {
+            //         const dirHandle = await window.showDirectoryPicker({
+            //             startIn: config.defaultDirectory
+            //         });
+            //         if (dirHandle) {
+            //             this.dirHandle = dirHandle;
+            //             this.saveLocation.textContent = `Save Location: ${this.dirHandle.name}`;
+            //             await this.loadNotes();
+            //         }
+            //     }
+            // }
         } catch (err) {
             console.log('No config file found, using defaults');
         }
@@ -31,7 +31,7 @@ class NotesApp {
     startClock() {
         const updateClock = () => {
             const now = new Date();
-            const time = now.toISOString()
+            const time = now.toLocaleString()
                 .replace('T', ' ')
                 .replace(/\.\d{3}Z$/, '');
                 document.getElementById('clock').textContent = time;
@@ -64,20 +64,35 @@ class NotesApp {
     }
 
     setupDragAndDrop() {
-        this.noteList.ondragover = (e) => {
+        // Allow dropping notes into editor
+        this.contentInput.ondragover = (e) => {
             e.preventDefault();
             e.currentTarget.classList.add('drag-over');
         };
         
-        this.noteList.ondragleave = (e) => {
+        this.contentInput.ondragleave = (e) => {
             e.currentTarget.classList.remove('drag-over');
         };
         
-        this.noteList.ondrop = (e) => {
+        this.contentInput.ondrop = async (e) => {
             e.preventDefault();
             e.currentTarget.classList.remove('drag-over');
+            const noteId = e.dataTransfer.getData('text/plain');
+            const note = this.notes.get(noteId);
+            if (note) {
+                // Insert note content at cursor position or append
+                const cursorPos = this.contentInput.selectionStart;
+                const currentContent = this.contentInput.value;
+                const newContent = currentContent.slice(0, cursorPos) + 
+                                 note.content + 
+                                 currentContent.slice(cursorPos);
+                this.contentInput.value = newContent;
+                this.setUnsaved();
+            }
         };
     }
+
+
 
     async chooseDirectory() {
         try {
@@ -113,18 +128,29 @@ class NotesApp {
             
             let title = 'Untitled';
             let content = text;
+            let modified = file.lastModified;
             
+            // Parse content and metadata
             if (text.startsWith('# ')) {
                 const lines = text.split('\n');
                 title = lines[0].substring(2).trim();
-                content = lines.slice(2).join('\n');
+                
+                // Look for timestamp in metadata
+                const timestampMatch = text.match(/<!-- Last saved: (.*?) -->/);
+                if (timestampMatch) {
+                    modified = new Date(timestampMatch[1]).getTime();
+                    // Remove metadata line from content
+                    content = lines.slice(3).join('\n').trim();
+                } else {
+                    content = lines.slice(2).join('\n').trim();
+                }
             }
-
+    
             return {
                 id,
                 title,
                 content,
-                modified: file.lastModified,
+                modified,
                 unsaved: false
             };
         } catch (err) {
@@ -143,25 +169,32 @@ class NotesApp {
         if (!this.currentNote || !this.dirHandle) return;
         
         try {
+            const saveTime = new Date().toISOString();
             const fileHandle = await this.dirHandle.getFileHandle(
                 `${this.currentNote.id}.md`,
                 { create: true }
             );
             
-            const noteContent = `# ${this.currentNote.title}\n\n${this.currentNote.content}`;
+            // Include timestamp in file content
+            const noteContent = `# ${this.currentNote.title}
+                        <!-- Last saved: ${saveTime} -->
+
+                        ${this.currentNote.content}`;
             
             const writer = await fileHandle.createWritable();
             await writer.write(noteContent);
             await writer.close();
             
             this.currentNote.unsaved = false;
+            this.currentNote.modified = saveTime;
             this.refreshNoteList();
-            this.setStatus(`Note saved at ${new Date().toLocaleTimeString()}`);
+            this.setStatus('Note saved');
         } catch (err) {
             console.error('Save error:', err);
             this.setStatus('Error saving note');
         }
     }
+
 
     async deleteCurrentNote() {
         if (!this.currentNote || !this.dirHandle) return;
